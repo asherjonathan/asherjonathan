@@ -1,0 +1,178 @@
+import math
+import random
+import time
+
+# --- Configuration ---
+FRIENDLY_DRONE_COUNT = 20
+ENEMY_DRONE_COUNT = 15
+BATTLEFIELD_SIZE = (1000, 1000)  # Width and height of the simulation area
+DETECTION_RANGE = 400
+ENGAGEMENT_RANGE = 15
+NEUTRALIZATION_GOAL = 0.9  # 90%
+SIMULATION_SPEED = 0.1  # Seconds between each step (lower is faster)
+
+class Drone:
+    """Represents a single drone in either swarm."""
+
+    def __init__(self, id, swarm_type, position):
+        self.id = id
+        self.swarm_type = swarm_type
+        self.position = list(position)
+        self.velocity = [random.uniform(-5, 5), random.uniform(-5, 5)]
+        self.status = "active"  # Can be "active" or "neutralized"
+        self.target = None
+
+    def __repr__(self):
+        return (f"{self.swarm_type.capitalize()} Drone {self.id} at "
+                f"({int(self.position[0])}, {int(self.position[1])})")
+
+    def move(self):
+        """Updates the drone's position based on its velocity."""
+        if self.status == "active":
+            self.position[0] += self.velocity[0]
+            self.position[1] += self.velocity[1]
+            # Simple boundary check to keep drones in the battlefield
+            self.position[0] = max(0, min(self.position[0], BATTLEFIELD_SIZE[0]))
+            self.position[1] = max(0, min(self.position[1], BATTLEFIELD_SIZE[1]))
+
+    def set_attack_vector(self, target_position, speed=7):
+        """Sets velocity to move directly towards a target position."""
+        if not self.status == "active":
+            return
+        dx = target_position[0] - self.position[0]
+        dy = target_position[1] - self.position[1]
+        distance = math.sqrt(dx**2 + dy**2)
+        if distance > 0:
+            self.velocity[0] = (dx / distance) * speed
+            self.velocity[1] = (dy / distance) * speed
+
+def get_swarm_centroid(swarm):
+    """Calculates the average position (center) of a swarm."""
+    active_drones = [d for d in swarm if d.status == "active"]
+    if not active_drones:
+        return [0, 0]
+    sum_x = sum(d.position[0] for d in active_drones)
+    sum_y = sum(d.position[1] for d in active_drones)
+    return [sum_x / len(active_drones), sum_y / len(active_drones)]
+
+def get_distance(pos1, pos2):
+    """Calculates the Euclidean distance between two points."""
+    return math.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
+
+def predict_enemy_movement(swarm, steps_ahead=10):
+    """Predicts the future centroid of the enemy swarm."""
+    active_drones = [d for d in swarm if d.status == "active"]
+    if not active_drones:
+        return [0, 0]
+    avg_vx = sum(d.velocity[0] for d in active_drones) / len(active_drones)
+    avg_vy = sum(d.velocity[1] for d in active_drones) / len(active_drones)
+
+    current_centroid = get_swarm_centroid(swarm)
+
+    predicted_x = current_centroid[0] + avg_vx * steps_ahead
+    predicted_y = current_centroid[1] + avg_vy * steps_ahead
+
+    return [predicted_x, predicted_y]
+
+def assign_targets(friendly_swarm, enemy_swarm):
+    """Assigns each friendly drone an enemy drone to target."""
+    active_enemies = [e for e in enemy_swarm if e.status == "active"]
+    active_friendlies = [f for f in friendly_swarm if f.status == "active"]
+
+    for i, friendly_drone in enumerate(active_friendlies):
+        # Simple assignment: cycle through enemies
+        if active_enemies:
+            friendly_drone.target = active_enemies[i % len(active_enemies)]
+
+def run_simulation():
+    """Main function to run the drone swarm simulation."""
+
+    # 1. INITIALIZE SWARMS
+    friendly_swarm = [
+        Drone(i, "friendly", (random.randint(50, 150), random.randint(300, 700)))
+        for i in range(FRIENDLY_DRONE_COUNT)
+    ]
+    enemy_swarm = [
+        Drone(i, "enemy", (random.randint(850, 950), random.randint(300, 700)))
+        for i in range(ENEMY_DRONE_COUNT)
+    ]
+
+    print("--- Drone Swarm Engagement Simulation ---")
+    print(f"Friendly Swarm: {FRIENDLY_DRONE_COUNT} drones. Enemy Swarm: {ENEMY_DRONE_COUNT} drones.")
+    print(f"Objective: Neutralize {NEUTRALIZATION_GOAL * 100}% of enemy swarm.\n")
+    time.sleep(2)
+
+    simulation_step = 0
+    while True:
+        simulation_step += 1
+        print(f"\n--- Simulation Step {simulation_step} ---")
+
+        # Move all drones
+        for drone in friendly_swarm + enemy_swarm:
+            drone.move()
+
+        # 2. DETECTION
+        friendly_centroid = get_swarm_centroid(friendly_swarm)
+        enemy_centroid = get_swarm_centroid(enemy_swarm)
+        distance_between_swarms = get_distance(friendly_centroid, enemy_centroid)
+
+        print(f"Distance between swarm centers: {int(distance_between_swarms)} units.")
+
+        if distance_between_swarms > DETECTION_RANGE:
+            print("Status: Patrolling. Enemy not in detection range.")
+
+        else:
+            print("Status: ENEMY SWARM DETECTED!")
+
+            # 3. PREDICT & FORMATION ATTACK
+            predicted_target = predict_enemy_movement(enemy_swarm)
+            print(f"Predicting enemy will move towards ({int(predicted_target[0])}, {int(predicted_target[1])}).")
+            print("Action: Moving to intercept formation!")
+
+            assign_targets(friendly_swarm, enemy_swarm)
+
+            # Arrange friendly swarm into a V-formation pointed at the predicted target
+            for i, drone in enumerate(friendly_swarm):
+                if drone.status == "active":
+                    # Simple V-formation logic
+                    angle_offset = (math.pi / 4) * (1 if i % 2 == 0 else -1)
+                    spread = i * 15
+                    target_x = friendly_centroid[0] + spread * math.cos(angle_offset)
+                    target_y = friendly_centroid[1] + spread * math.sin(angle_offset)
+
+                    # Drones now move towards their position in the formation
+                    # A more advanced model would have them move towards the enemy *while* forming up
+                    if drone.target:
+                         drone.set_attack_vector(drone.target.position)
+                    else: # If no targets left, move towards predicted centroid
+                         drone.set_attack_vector(predicted_target)
+
+
+            # 4. ENGAGEMENT AND NEUTRALIZATION
+            for friendly in friendly_swarm:
+                if friendly.status == "active" and friendly.target and friendly.target.status == "active":
+                    if get_distance(friendly.position, friendly.target.position) < ENGAGEMENT_RANGE:
+                        print(f"  > Friendly {friendly.id} neutralized Enemy {friendly.target.id}!")
+                        friendly.target.status = "neutralized"
+                        friendly.target = None # Clear target to be reassigned next step
+
+        # Check neutralization status
+        neutralized_count = sum(1 for d in enemy_swarm if d.status == "neutralized")
+        neutralization_percent = neutralized_count / ENEMY_DRONE_COUNT
+        print(f"Enemy Neutralization: {neutralized_count}/{ENEMY_DRONE_COUNT} ({neutralization_percent:.0%})")
+
+        if neutralization_percent >= NEUTRALIZATION_GOAL:
+            print("\n--- MISSION SUCCESSFUL ---")
+            print(f"Neutralized {neutralization_percent:.0%} of enemy swarm.")
+            break
+
+        if all(d.status == "neutralized" for d in friendly_swarm):
+            print("\n--- MISSION FAILED ---")
+            print("All friendly drones have been neutralized.")
+            break
+
+        time.sleep(SIMULATION_SPEED)
+
+
+if __name__ == "__main__":
+    run_simulation()
